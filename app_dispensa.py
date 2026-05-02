@@ -1,7 +1,7 @@
- """
+"""
 Dispensa Smart - App Streamlit per la gestione intelligente della dispensa
 Stile: Nordic Midnight
-Autore: Senior Python Developer (v2)
+Autore: Senior Python Developer
 """
 
 import streamlit as st
@@ -53,9 +53,17 @@ st.set_page_config(
 
 # Costanti
 PASSWORD = "Giuseppe2026.!"
-TELEGRAM_TOKEN = "8356086663:AAHPdwVsKPw9NyKfouDqNhlpjhi4JlvWBuc"
-TELEGRAM_CHAT_ID = "263319278"
 OFF_API = "https://world.openfoodfacts.org/api/v2/product/{barcode}.json"
+
+# Telegram: i valori vengono letti dai Secrets (locale → .streamlit/secrets.toml,
+# cloud → Settings → Secrets della tua app). Se mancano, le notifiche vengono
+# semplicemente disattivate senza errori.
+try:
+    TELEGRAM_TOKEN = st.secrets.get("TELEGRAM_TOKEN", "")
+    TELEGRAM_CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
+except (KeyError, FileNotFoundError):
+    TELEGRAM_TOKEN = ""
+    TELEGRAM_CHAT_ID = ""
 
 # Token persistente di login: hash della password (NON la password in chiaro)
 AUTH_TOKEN = hashlib.sha256(f"{PASSWORD}-dispensa-smart-salt".encode()).hexdigest()[:24]
@@ -786,6 +794,9 @@ def decode_barcode(image_bytes) -> str:
 # TELEGRAM
 # =====================================================================
 def telegram_send(text: str) -> bool:
+    # Se le credenziali non sono configurate, salta silenziosamente
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return False
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}
