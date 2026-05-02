@@ -1,4 +1,4 @@
-"""
+ """
 Dispensa Smart - App Streamlit per la gestione intelligente della dispensa
 Stile: Nordic Midnight
 Autore: Senior Python Developer
@@ -14,6 +14,7 @@ from PIL import Image
 import io
 import os
 from supabase import create_client, Client
+import extra_streamlit_components as stx
 
 # Tentativo di import di pyzbar (richiede zbar installato sul sistema)
 try:
@@ -808,22 +809,52 @@ def notify_expiring_on_startup():
 
 
 # =====================================================================
-# LOGIN PERSISTENTE (via query param)
+# LOGIN PERSISTENTE — combina query param + COOKIE HTTP
+# Su iOS PWA i query param a volte spariscono al riavvio; il cookie persiste
+# nel local storage del browser per molti giorni anche da web app.
 # =====================================================================
+COOKIE_NAME = "dispensa_auth"
+COOKIE_DAYS = 365   # quanto a lungo restare loggati
+
+
+@st.cache_resource
+def get_cookie_manager():
+    """Singleton del CookieManager (deve esistere uno solo per sessione)."""
+    return stx.CookieManager(key="dispensa_cookie_mgr")
+
+
 def check_persistent_auth():
-    """Verifica se nell'URL è presente un token di autenticazione valido."""
+    """
+    Verifica autenticazione da:
+      1. session_state (più rapido, sessione corrente)
+      2. query param ?auth=...
+      3. cookie HTTP "dispensa_auth"
+    """
     if st.session_state.get("authenticated"):
         return True
+
+    # 1) URL query param (modo veloce, funziona su desktop e Safari mobile)
     token = st.query_params.get("auth")
     if token == AUTH_TOKEN:
         st.session_state["authenticated"] = True
         return True
+
+    # 2) Cookie HTTP (modo affidabile, sopravvive anche su iOS PWA)
+    cm = get_cookie_manager()
+    cookie_token = cm.get(cookie=COOKIE_NAME)
+    if cookie_token == AUTH_TOKEN:
+        st.session_state["authenticated"] = True
+        return True
+
     return False
+
 
 def login_screen():
     st.markdown('<div class="nm-header">Dispensa Smart</div>', unsafe_allow_html=True)
     st.markdown('<div class="nm-subtitle">🔐 Accesso Riservato</div>', unsafe_allow_html=True)
     st.markdown('<div class="nm-login-card">', unsafe_allow_html=True)
+
+    cm = get_cookie_manager()
 
     with st.form("login_form", clear_on_submit=False):
         pwd = st.text_input("Password", type="password", placeholder="Inserisci la password")
@@ -831,9 +862,15 @@ def login_screen():
         if submit:
             if pwd == PASSWORD:
                 st.session_state["authenticated"] = True
-                # Imposta il token nell'URL: sopravvive ai refresh della pagina
+                # Imposta il token sia nell'URL (per browser desktop) sia come cookie
+                # (per Safari/iPhone in modalità web app)
                 st.query_params["auth"] = AUTH_TOKEN
-                st.success("Accesso effettuato! Da ora resterai loggato.")
+                cm.set(
+                    COOKIE_NAME,
+                    AUTH_TOKEN,
+                    expires_at=datetime.now() + timedelta(days=COOKIE_DAYS),
+                )
+                st.success("Accesso effettuato! Da ora resterai loggato anche da iPhone.")
                 st.rerun()
             else:
                 st.error("Password errata.")
@@ -844,44 +881,45 @@ def login_screen():
 # RENDER ELENCO PRODOTTI — raggruppamento per MACROCATEGORIA
 # =====================================================================
 def _render_single_product(p):
-    """Renderizza una singola card prodotto con i bottoni di azione."""
+    """
+    Renderizza una singola card prodotto su UNA SOLA RIGA, senza emoji
+    (l'emoji compare solo nell'header della macrocategoria, sopra).
+    Layout: nome + quantità · scadenza · badge giorni · 🍽️ · 🗑️
+    """
     row_cls, badge_cls, badge_label = expiry_class(p["data_scadenza"])
-    emoji = get_emoji(p["nome"])
     scad = p["data_scadenza"] or "—"
+    qty = int(p["quantita"])
+    qty_str = f" <span style='color:#88C0D0'>×{qty}</span>" if qty > 1 else ""
 
     with st.container(border=True):
-        cols = st.columns([0.6, 3.5, 1.4, 1.6, 1.2, 0.7])
+        # Solo 3 colonne: info testuale + Usa + Cestino — niente emoji per riga
+        cols = st.columns([5, 1, 0.8])
 
-        cols[0].markdown(
-            f"<div style='font-size:2rem;text-align:center'>{emoji}</div>",
-            unsafe_allow_html=True,
-        )
+        with cols[0]:
+            st.markdown(
+                f"<div style='line-height:1.55;padding-top:0.35rem'>"
+                f"<b>{p['nome']}</b>{qty_str} "
+                f"<span style='color:#88C0D0;font-size:0.88rem'>· 📅 {scad}</span> "
+                f"<span class='{badge_cls}'>{badge_label}</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
 
-        with cols[1]:
-            st.markdown(f"**{p['nome']}**")
-            st.caption(f"Quantità: {p['quantita']}")
-
-        cols[2].markdown(
-            f"<div style='padding-top:0.6rem'>📅 {scad}</div>",
-            unsafe_allow_html=True,
-        )
-        cols[3].markdown(
-            f"<div style='padding-top:0.4rem'><span class='{badge_cls}'>{badge_label}</span></div>",
-            unsafe_allow_html=True,
-        )
-
-        if cols[4].button(
-            "🍽️ Usa", key=f"consume_{p['id']}", use_container_width=True,
-            help="Consuma una unità. Se arrivi a 0, il prodotto sparisce dall'elenco."
+        if cols[1].button(
+            "🍽️", key=f"consume_{p['id']}", use_container_width=True,
+            help="Consuma una unità. Se arrivi a 0, il prodotto sparisce dall'elenco.",
         ):
             eliminato, nome = db_consume_one(p["id"])
             if eliminato:
-                st.toast(f"✅ {nome} consumato e rimosso dall'inventario.", icon="🍽️")
+                st.toast(f"✅ {nome} consumato e rimosso.", icon="🍽️")
             else:
                 st.toast(f"✅ Una unità di {nome} consumata.", icon="🍽️")
             st.rerun()
 
-        if cols[5].button("🗑️", key=f"del_{p['id']}", help="Elimina dall'inventario"):
+        if cols[2].button(
+            "🗑️", key=f"del_{p['id']}", use_container_width=True,
+            help="Elimina dall'inventario",
+        ):
             db_delete(p["id"])
             st.rerun()
 
@@ -1313,8 +1351,12 @@ def main_app():
         if st.button("🚪 Logout"):
             st.session_state["authenticated"] = False
             st.session_state["telegram_sent"] = False
-            # Rimuove il token dall'URL così il prossimo accesso richiede password
+            # Rimuove il token dall'URL e dal cookie così il prossimo accesso richiede password
             st.query_params.clear()
+            try:
+                get_cookie_manager().delete(COOKIE_NAME)
+            except Exception:
+                pass
             st.rerun()
         st.caption("Nordic Midnight • v1.0")
 
