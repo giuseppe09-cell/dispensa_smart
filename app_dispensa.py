@@ -1,7 +1,7 @@
  """
 Dispensa Smart - App Streamlit per la gestione intelligente della dispensa
 Stile: Nordic Midnight
-Autore: Senior Python Developer
+Autore: Senior Python Developer (v2)
 """
 
 import streamlit as st
