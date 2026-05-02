@@ -830,12 +830,7 @@ COOKIE_DAYS = 365   # quanto a lungo restare loggati
 
 @st.cache_resource
 def get_cookie_manager():
-    """
-    Restituisce il CookieManager. NON usiamo @st.cache_resource perché il CookieManager
-    è di fatto un widget (contiene un iframe nascosto) e Streamlit avvisa quando
-    metti widget in funzioni cachate. Lo memorizziamo invece in session_state
-    così resta unico per tutta la sessione corrente.
-    """
+    """CookieManager via session_state (no cache_resource per evitare warning widget)."""
     if "_cookie_mgr" not in st.session_state:
         st.session_state["_cookie_mgr"] = stx.CookieManager(key="dispensa_cookie_mgr")
     return st.session_state["_cookie_mgr"]
